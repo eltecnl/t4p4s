@@ -35,7 +35,7 @@
 
 #include "dpdk_lib.h"
 #include <rte_ethdev.h>
-
+#include <rte_cycles.h>
 #include "gen_include.h"
 
 #ifndef T4P4S_NIC_VARIANT
@@ -90,6 +90,19 @@ extern packet* clone_packet(packet* pd, struct rte_mempool* mempool);
 
 extern uint32_t get_port_mask();
 extern uint8_t get_port_count();
+
+
+// Traceable variable stats for INT feature
+static uint32_t intvar_min; 
+static uint32_t intvar_max;
+static uint32_t intvar_mean;
+
+static uint32_t procdelay_min; 
+static uint32_t procdelay_max;
+static uint32_t procdelay_mean;
+static uint32_t pkt_cnt = 1;
+
+
 
 void broadcast_packet(struct lcore_data* lcdata, packet_descriptor_t* pd, int egress_port, int ingress_port)
 {
@@ -151,15 +164,46 @@ void do_single_tx(struct lcore_data* lcdata, packet_descriptor_t* pd, unsigned q
     }
 }
 
+void log_telemetry_stats(uint32_t time, uint32_t delta, uint32_t intvar) {
+	static uint32_t last_t = 1000000 + rte_get_timer_cycles() * 1000000 / rte_get_timer_hz();
+	if (last_t > time) {
+		printf("INT-Stats time %u min/max/mean-procdelay %u %u %f min/max/mean-intvar %u %u %f count %u\n", time, procdelay_min, procdelay_max, 1.0*procdelay_mean/pkt_cnt, intvar_min, intvar_max, 1.0*intvar_mean/pkt_cnt, pkt_cnt);
+		procdelay_min = delta;
+		procdelay_max = delta;
+		procdelay_mean = delta;
+		pkt_cnt = 1;
+		intvar_min = intvar;
+		intvar_max = intvar;
+		intvar_mean = intvar;
+		last_t = 1000000 + time;
+	}
+	else {
+		if (delta < procdelay_min) procdelay_min = delta;
+		if (delta > procdelay_max) procdelay_max = delta;
+		procdelay_mean += delta;
+		if (intvar < intvar_min) intvar_min = intvar;
+		if (intvar > intvar_max) intvar_max = intvar;
+		intvar_mean += intvar;
+		++pkt_cnt;
+	}
+	
+
+}
+
 void do_single_rx(struct lcore_data* lcdata, packet_descriptor_t* pd, unsigned queue_idx, unsigned pkt_idx)
 {
     bool got_packet = receive_packet(pd, lcdata, pkt_idx);
+    uint32_t current_time_1;// = rte_get_timer_cycles() * 1000000 / rte_get_timer_hz();
+    uint32_t current_time_2;
 
     if (got_packet) {
 	    if (likely(is_packet_handled(pd, lcdata))) {
+		current_time_1 = rte_get_timer_cycles() * 1000000 / rte_get_timer_hz();
 	        handle_packet(pd, lcdata->conf->state.tables, &(lcdata->conf->state.parser_state), get_portid(lcdata, queue_idx));
-            do_single_tx(lcdata, pd, queue_idx, pkt_idx);
-        }
+		current_time_2 = rte_get_timer_cycles() * 1000000 / rte_get_timer_hz();
+		log_telemetry_stats(current_time_2, current_time_2 - current_time_1, GET_INT32_AUTO_PACKET(pd, header_instance_standard_metadata, field_standard_metadata_t_intvar) );
+		do_single_tx(lcdata, pd, queue_idx, pkt_idx);
+            }
     }
 
     main_loop_post_single_rx(lcdata, got_packet);
