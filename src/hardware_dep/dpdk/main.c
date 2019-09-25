@@ -165,8 +165,9 @@ void do_single_tx(struct lcore_data* lcdata, packet_descriptor_t* pd, unsigned q
 }
 
 void log_telemetry_stats(uint32_t time, uint32_t delta, uint32_t intvar) {
-	static uint32_t last_t = 1000000 + rte_get_timer_cycles() * 1000000 / rte_get_timer_hz();
-	if (last_t > time) {
+	static uint32_t last_t = 0;
+        //1000000 + rte_get_timer_cycles() * 1000000 / rte_get_timer_hz();
+	if (last_t < time) {
 		printf("INT-Stats time %u min/max/mean-procdelay %u %u %f min/max/mean-intvar %u %u %f count %u\n", time, procdelay_min, procdelay_max, 1.0*procdelay_mean/pkt_cnt, intvar_min, intvar_max, 1.0*intvar_mean/pkt_cnt, pkt_cnt);
 		procdelay_min = delta;
 		procdelay_max = delta;
